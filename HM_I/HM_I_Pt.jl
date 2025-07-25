@@ -3,7 +3,7 @@ using Plots, Printf, PlotThemes
 
 #= 
 This code solves the PDEs of Model I from Schmalholz et al., 2024:
-Equations for fluid pressure (Pf) diffusion
+Equation for fluid pressure (Pf) diffusion
 Without (de)hydratation reactions
 Including poroelastic effects
 
@@ -23,10 +23,10 @@ function HM_I()
     gaussienne  = 1
     ellipse     = 0
 
-    # Calcul of error with the analytical solution for a gaussienne
-    ana_sol     = 1
+    # Calcul of error with the analytical solution for a gaussienne anomaly
+    ana_sol     = 0
 
-
+    
     # I - Initialisalisation
     # ----------------------
  
@@ -44,16 +44,13 @@ function HM_I()
     zo          = 0.0                               # localisation of anomaly on z
 
     # Numerics 
-    Nx          = 101
-    Ny          = 101
-    Nz          = 101
+    Nx          = 51
+    Ny          = 51
+    Nz          = 51
     nt          = 10
-    niter       = 1e5
     tol         = 1e-5
-    nout        = 100
-    CFL         = 0.98
-    c_fact      = 0.5
-
+    niter       = 1e5
+    nout        = 1000
 
     #---------------------------------------
     
@@ -81,7 +78,7 @@ function HM_I()
 
     # Numerics 
     n = (
-        v = (x = Nx, y = Ny, z = Nz),           # nb of vertices
+        v = (x = Nx, y = Ny, z = Nz),            # nb of vertices
         c = (x = Nx-1, y = Ny-1, z = Nz-1),      # nb of centroids
         iter = niter,
         out = nout,
@@ -107,14 +104,6 @@ function HM_I()
         ellipse = ellipse
     )
 
-    num = (
-        CFL = CFL, 
-        c_fact = c_fact,
-        nout = nout,
-        tol = tol 
-    )
-
-
     Dim == 0 ? error("0 dimention = Nan diffusion ") : nothing
     Dim > 3 ? error("On s'arrete à la troisieme dimention d'espace ici ! XD") : nothing
     (ana_sol == 1) && (ana_sol + gaussienne != 2) ? error("La solution analytique doit être initiée pour une guassienne") : nothing
@@ -123,14 +112,16 @@ function HM_I()
 
 
     # Calcul in function of the dimension
-    Dim == 1 ? Dim1(;physics,κ,n,Δ,Δt,mesh,num) : nothing
-    Dim == 2 ? Dim2(;physics,κ,n,Δ,Δt,mesh,num, ano_init, ana_sol) : nothing
-    Dim == 3 ? Dim3(;physics,κ,n,Δ,Δt,mesh,num, ano_init, ana_sol) : nothing
+    Dim == 1 ? Dim1(;physics,κ,n,Δ,Δt,mesh,tol) : nothing
+    Dim == 2 ? Dim2(;physics,κ,n,Δ,Δt,mesh,tol, ano_init, ana_sol) : nothing
+    Dim == 3 ? Dim3(;physics,κ,n,Δ,Δt,mesh,tol, ano_init, ana_sol) : nothing
 
 end
 
 
 function Dim1(;physics,κ,n,Δ,Δt,mesh,num)
+
+    Δτ          = 2 * Δt*Δ.x^2/(4.1*κ*Δt + Δ.x^2)     # Pseudo time step
 
     # Allocate array 
     Pf      = zeros(n.c.x)
@@ -138,12 +129,8 @@ function Dim1(;physics,κ,n,Δ,Δt,mesh,num)
     Pf_init = zero(Pf)
     ∇_qPf   = zero(Pf)
     R_Pf    = zero(Pf)
-    R_Pf0   = zero(Pf)
-    ∂Pf∂τ   = zero(Pf)
 
     qPf     = zeros(n.v.x)
-    errPf   = 0
-
 
     # II - Initialization
     # -------------------
@@ -152,12 +139,6 @@ function Dim1(;physics,κ,n,Δ,Δt,mesh,num)
     Pf      = physics.P_BG * ones(n.c.x)
     Pf     .= Pf + physics.Pf_max * exp.(-mesh.c.x.^2/2/physics.dPf^2)
     Pf_init = copy(Pf)
-
-    # Calcul du coeff lambda
-    λmax = 2 * abs(κ ./ Δ.x .^ 2) + abs(2 * κ ./ Δ.x .^ 2 + 1 ./ Δt)
-
-    # Pseudo time step is proportional to λmax (e.g., Oakley, 1995)
-    Δτ    = 2 / sqrt(maximum(λmax)) * num.CFL
 
 
     # III - Computation
@@ -171,17 +152,8 @@ function Dim1(;physics,κ,n,Δ,Δt,mesh,num)
         # update
         Pf0 .= Pf
 
-        # Damping coefficient is proportional to λmin (e.g., Oakley, 1995)
-        λmin  = 0.          # wild guess  
-        c     = 2*sqrt.(λmin)*num.c_fact
-        β     = 2 .* Δτ ./ (2 .+ c.*Δτ)
-        α     = (2 .- c.*Δτ) ./ (2 .+ c.*Δτ)
-
         #Pseudo-time step 
         for iter=1:n.iter
-
-            # Update old residual 
-            R_Pf0   .= R_Pf
 
             # Limits -> flux = 0
             qPf[1]        = 0
@@ -196,36 +168,15 @@ function Dim1(;physics,κ,n,Δ,Δt,mesh,num)
             # Residual
             R_Pf         .= - ((physics.Βϕ * physics.ηf) * (Pf - Pf0) / Δt + ∇_qPf )
 
-            # Pseudo-rate update
-            ∂Pf∂τ       .= β * R_Pf .+ α * ∂Pf∂τ
-
             # Solution update
-            Pf          .+= Δτ/(physics.ηf*physics.Βϕ) * ∂Pf∂τ
+            Pf          .+= Δτ/(physics.ηf*physics.Βϕ) * R_Pf 
             
-            if mod(iter, num.nout)==0 || iter==1
-                # Error calc 
-                iter == 1 ? errPf = norm(R_Pf)/sqrt(length(R_Pf)) : nothing
-                Abs_errPf = norm(R_Pf)/sqrt(length(R_Pf))
-                Rel_errPf = Abs_errPf / errPf
-                
-                @printf("iter = %06d:  Abs. Err. Pf = %2.1e Abs. Rel. Err. Pf = %2.1e\n", iter, Abs_errPf, Rel_errPf)
-
-                Rel_errPf < num.tol && Abs_errPf < num.tol ? break : nothing
-
-                if isnan(Abs_errPf)
-                    error("Residual errPf = NaN!")
-                end
-
-                # Mettre a jour λmax ici si la le coeff est non constant dans le temps
-
-                # Rayleigh quotient (e.g., Joldes et al., 2011)
-                λmin  = abs.((sum(Δτ*∂Pf∂τ.*(R_Pf .- R_Pf0)))) / sum( (Δτ*∂Pf∂τ) .* (Δτ*∂Pf∂τ) )
-
-                # Dynamic evaluation of PT iteration parameters
-                c     = 2*sqrt.(λmin)*num.c_fact  
-                β     = 2 .* Δτ ./ (2 .+ c.*Δτ)
-                α     = (2 .- c.*Δτ) ./ (2 .+ c.*Δτ)
-            end      
+            # Error calculation
+            errPf         = norm(R_Pf) / length(R_Pf)
+            if mod(iter, 100)==0
+                @printf("iter = %06d:  Err. Pf = %2.1e\n", iter, errPf)
+            end
+            errPf<num.tol ? break : nothing
 
         end
     
@@ -248,7 +199,10 @@ function Dim1(;physics,κ,n,Δ,Δt,mesh,num)
     end 
 end
 
-function Dim2(;physics,κ,n,Δ,Δt,mesh,num,ano_init,ana_sol)
+function Dim2(;physics,κ,n,Δ,Δt,mesh,num, ano_init, ana_sol)
+
+    Δτ          = 2 * Δt*minimum(Δ)^2/(4.1*κ*Δt + minimum(Δ)^2)/(physics.Βϕ*physics.ηf)  / 100  # Pseudo time step
+    θ           = minimum(physics.L)/minimum(n.v) * 4.3              # For damping
 
     # Allocate array 
     Pf      = zeros(n.c.x,n.c.y)
@@ -256,12 +210,11 @@ function Dim2(;physics,κ,n,Δ,Δt,mesh,num,ano_init,ana_sol)
     Pf_init = zero(Pf)
     ∇_qPf   = zero(Pf)
     R_Pf    = zero(Pf)
-    R_Pf0   = zero(Pf)
     Pfana   = zero(Pf)
     ∂Pf∂τ   = zero(Pf)  
 
     qPf     = (x = zeros(n.v.x,n.c.y), y = zeros(n.c.x,n.v.y))
-    errPf   = 0
+
 
     # II - Initialization
     # -------------------
@@ -278,12 +231,6 @@ function Dim2(;physics,κ,n,Δ,Δt,mesh,num,ano_init,ana_sol)
 
     Pf_init  = copy(Pf)
 
-    # Calcul du coeff lambda
-    λmax = 2 * abs(κ ./ Δ.x .^ 2) + 2 * abs(κ ./ Δ.y .^ 2) + abs(2 * κ ./ Δ.y .^ 2 + 2 * κ ./ Δ.x .^ 2 + 1 ./ Δt)
-
-    # Pseudo time step is proportional to λmax (e.g., Oakley, 1995)
-    Δτ    = 2 / sqrt(maximum(λmax)) * num.CFL
-
 
     # III - Computation
     # -----------------
@@ -296,17 +243,8 @@ function Dim2(;physics,κ,n,Δ,Δt,mesh,num,ano_init,ana_sol)
         # update
         Pf0 .= Pf
 
-        # Damping coefficient is proportional to λmin (e.g., Oakley, 1995)
-        λmin  = 0.          # wild guess  
-        c     = 2*sqrt.(λmin)*num.c_fact
-        β     = 2 .* Δτ ./ (2 .+ c.*Δτ)
-        α     = (2 .- c.*Δτ) ./ (2 .+ c.*Δτ)
-
         #Pseudo-time step 
         for iter=1:n.iter
-
-            # Update old residual 
-            R_Pf0   .= R_Pf
 
             # Limits -> flux = 0
             qPf.x[1,:] .= 0 ; qPf.x[end,:] .= 0
@@ -323,36 +261,21 @@ function Dim2(;physics,κ,n,Δ,Δt,mesh,num,ano_init,ana_sol)
             @. R_Pf       = - ((physics.Βϕ * physics.ηf) * (Pf - Pf0) / Δt + ∇_qPf)
 
             # Pseudo rate update
-            @. ∂Pf∂τ      = β * R_Pf .+ α * ∂Pf∂τ            
+            @. ∂Pf∂τ      = R_Pf + (1.0-θ) * ∂Pf∂τ             
             
             # Solution update
-            @. Pf        += Δτ/(physics.ηf*physics.Βϕ) * ∂Pf∂τ
+            @. Pf        += Δτ  * ∂Pf∂τ  
             
-            if mod(iter, num.nout)==0 || iter==1
-                # Error calc 
-                iter == 1 ? errPf = norm(R_Pf)/sqrt(length(R_Pf)) : nothing
-                Abs_errPf = norm(R_Pf)/sqrt(length(R_Pf))
-                Rel_errPf = Abs_errPf / errPf
-                
-                @printf("iter = %06d:  Abs. Err. Pf = %2.1e Abs. Rel. Err. Pf = %2.1e\n", iter, Abs_errPf, Rel_errPf)
+            # Error calculation
+            errPf      = norm(R_Pf) / length(R_Pf)
+            if mod(iter, 100)==0 || errPf<tol
+                @printf("iter = %06d:  Err. Pf = %2.1e\n", iter, errPf)
+            end
 
-                Rel_errPf < num.tol && Abs_errPf < num.tol ? break : nothing
-
-                if isnan(Abs_errPf)
-                    error("Residual errVsx = NaN!")
-                end
-
-                # Mettre a jour λmax ici si la le coeff est non constant dans le temps
-
-                # Rayleigh quotient (e.g., Joldes et al., 2011)
-                λmin  = abs.((sum(Δτ*∂Pf∂τ.*(R_Pf .- R_Pf0)))) / sum( (Δτ*∂Pf∂τ) .* (Δτ*∂Pf∂τ) )
-
-                # Dynamic evaluation of PT iteration parameters
-                c     = 2*sqrt.(λmin)*num.c_fact  
-                β     = 2 .* Δτ ./ (2 .+ c.*Δτ)
-                α     = (2 .- c.*Δτ) ./ (2 .+ c.*Δτ)
-            end       
-
+            if isnan(errPf)
+                error("Residual err = NaN!")
+            end
+            errPf<tol ? break : nothing
         end
     
 
@@ -392,6 +315,7 @@ function Dim2(;physics,κ,n,Δ,Δt,mesh,num,ano_init,ana_sol)
             p4 = scatter!(mesh.c.y, Pf0[:,Int64(round(n.c.x/2))], label="Pf0", ms=2.5, marker=:circle, markercolor=:white , markeralpha =:0.5, markerstrokecolor=:blue)
             p4 = plot!(mesh.c.y, Pfana[:,Int64(round(n.c.x/2))], label="Pf ana", lc=:white)
 
+
             if it == n.t
                 display(plot(p3,p4, layout=(1,2)))
             end
@@ -400,7 +324,10 @@ function Dim2(;physics,κ,n,Δ,Δt,mesh,num,ano_init,ana_sol)
     end 
 end
 
-function Dim3(;physics,κ,n,Δ,Δt,mesh,num,ano_init,ana_sol)
+function Dim3(;physics,κ,n,Δ,Δt,mesh,tol, ano_init, ana_sol)
+
+    Δτ          = 2 * Δt*minimum(Δ)^2/(4.1*κ*Δt + minimum(Δ)^2)/(physics.Βϕ*physics.ηf)  / 10  # Pseudo time step
+    θ           = minimum(physics.L)/minimum(n.v) * 4.3              # For damping
 
     # Allocate array 
     Pf      = zeros(n.c...)
@@ -408,12 +335,10 @@ function Dim3(;physics,κ,n,Δ,Δt,mesh,num,ano_init,ana_sol)
     Pf_init = zero(Pf)
     ∇_qPf   = zero(Pf)
     R_Pf    = zero(Pf)
-    R_Pf0   = zero(Pf)
     Pfana   = zero(Pf)
     ∂Pf∂τ   = zero(Pf)  
 
     qPf     = (x = zeros(n.v.x,n.c.y,n.c.z), y = zeros(n.c.x,n.v.y,n.c.z), z = zeros(n.c.x,n.c.y,n.v.z))
-    errPf   = 0
 
 
     # II - Initialization
@@ -433,12 +358,6 @@ function Dim3(;physics,κ,n,Δ,Δt,mesh,num,ano_init,ana_sol)
 
     Pf_init  = copy(Pf)
 
-    # Calcul du coeff lambda
-    λmax = 2 * abs(κ ./ Δ.x .^ 2) + 2 * abs(κ ./ Δ.y .^ 2) + 2 * abs(κ ./ Δ.z .^ 2) + abs(2 * κ ./ Δ.z .^ 2 + 2 * κ ./ Δ.y .^ 2 + 2 * κ ./ Δ.x .^ 2 + 1 ./ Δt)
-
-    # Pseudo time step is proportional to λmax (e.g., Oakley, 1995)
-    Δτ    = 2 / sqrt(maximum(λmax)) * num.CFL
-
 
     # III - Computation
     # -----------------
@@ -451,22 +370,14 @@ function Dim3(;physics,κ,n,Δ,Δt,mesh,num,ano_init,ana_sol)
         # Update
         Pf0 .= Pf
 
-        # Damping coefficient is proportional to λmin (e.g., Oakley, 1995)
-        λmin  = 0.          # wild guess  
-        c     = 2*sqrt.(λmin)*num.c_fact
-        β     = 2 .* Δτ ./ (2 .+ c.*Δτ)
-        α     = (2 .- c.*Δτ) ./ (2 .+ c.*Δτ)
-
         #Pseudo-time step 
         for iter=1:n.iter
-
-            # Update old residual 
-            R_Pf0   .= R_Pf
 
             # Limits -> flux = 0
             qPf.x[1,:,:] .= 0 ; qPf.x[end,:,:] .= 0
             qPf.y[:,1,:] .= 0 ; qPf.y[:,end,:] .= 0
             qPf.z[:,:,1] .= 0 ; qPf.y[:,:,end] .= 0
+
 
             # Flux
             @. qPf.x[2:end-1,:,:] = - physics.k * (Pf[2:end,:,:] - Pf[1:end-1,:,:]) /Δ.x
@@ -480,36 +391,21 @@ function Dim3(;physics,κ,n,Δ,Δt,mesh,num,ano_init,ana_sol)
             @. R_Pf       = - ((physics.Βϕ * physics.ηf) * (Pf - Pf0) / Δt + ∇_qPf)
 
             # Pseudo rate update
-            @. ∂Pf∂τ      =β * R_Pf .+ α * ∂Pf∂τ       
+            @. ∂Pf∂τ      = R_Pf + (1.0-θ) * ∂Pf∂τ             
             
             # Solution update
-            @. Pf        += Δτ/(physics.ηf*physics.Βϕ) * ∂Pf∂τ
+            @. Pf        += Δτ  * ∂Pf∂τ  
             
-            if mod(iter, num.nout)==0 || iter==1
-                # Error calc 
-                iter == 1 ? errPf = norm(R_Pf)/sqrt(length(R_Pf)) : nothing
-                Abs_errPf = norm(R_Pf)/sqrt(length(R_Pf))
-                Rel_errPf = Abs_errPf / errPf
-                
-                @printf("iter = %06d:  Abs. Err. Pf = %2.1e Abs. Rel. Err. Pf = %2.1e\n", iter, Abs_errPf, Rel_errPf)
+            # Error calculation
+            errPf         = norm(R_Pf) / length(R_Pf)
+            if mod(iter, 100)==0 || errPf<tol
+                @printf("iter = %06d:  Err. Pf = %2.1e\n", iter, errPf)
+            end
 
-                Rel_errPf < num.tol && Abs_errPf < num.tol ? break : nothing
-
-                if isnan(Abs_errPf)
-                    error("Residual errVsx = NaN!")
-                end
-
-                # Mettre a jour λmax ici si la le coeff est non constant dans le temps
-
-                # Rayleigh quotient (e.g., Joldes et al., 2011)
-                λmin  = abs.((sum(Δτ*∂Pf∂τ.*(R_Pf .- R_Pf0)))) / sum( (Δτ*∂Pf∂τ) .* (Δτ*∂Pf∂τ) )
-
-                # Dynamic evaluation of PT iteration parameters
-                c     = 2*sqrt.(λmin)*num.c_fact  
-                β     = 2 .* Δτ ./ (2 .+ c.*Δτ)
-                α     = (2 .- c.*Δτ) ./ (2 .+ c.*Δτ)
-            end       
-
+            if isnan(errPf)
+                error("Residual err = NaN!")
+            end
+            errPf<tol ? break : nothing
         end
     
 
